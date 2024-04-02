@@ -230,5 +230,60 @@ Explicación de configuración de parámetros:
    - `A`: El tipo de RR, en este caso, dirección IPv4.
   
    - `192.168.0.150` y `192.168.0.155`: Son las direcciones IP correspondientes a los servidores de nombres `ns1` y `ns2`, respectivamente.
+
+###### Server DNS Slave
+
+Entorno:
+- SO: Ubuntu
+- Network: 192.168.0.0/24
+- IP: 192.168.0.155
+- Hostname: ns2.hostingavanzado.intranet
+
+- Configuración de red
+
+Configuración de IP estática
+
+Abrimos archivo de configuración netplan
+
+```
+# nano /etc/netplan/00-installer-config.yaml
+```
+
+Luego lo editamos dejandolo de la siguiente manera:
+
+```
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    enp0s3:
+      dhcp4: false
+      addresses:
+        - 192.168.0.155/24
+      nameserver:
+       addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+          - to: default
+            via: 192.168.0.1
+```
+
+Aplicamos cambios
+```
+# netplan apply
+```
+
+Nombramos hostname
+
+```
+# hostnamectl set-hostname ns2.hostingavanzado.intranet
+```
+Aplicamos cambios
+```
+# reboot
+```
+
+Instalación de BIND
+```
+# apt update && apt install bind9 bind9utils
+```
    
   
