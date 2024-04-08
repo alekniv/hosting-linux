@@ -37,7 +37,7 @@ network:
       dhcp4: false
       addresses:
         - 192.168.0.150/24
-      nameserver:
+      nameservers:
        addresses: [8.8.8.8, 8.8.4.4]
       routes:
           - to: default
@@ -52,7 +52,7 @@ Aplicamos cambios
 Nombramos hostname
 
 ```
-# hostnamectl set-hostname ns1.hostingavanzado.intranet
+# hostnamectl set-hostname ns1.nameserver.intranet
 ```
 Aplicamos cambios
 ```
@@ -62,6 +62,34 @@ Aplicamos cambios
 Instalación de BIND
 ```
 # apt update && apt install bind9 bind9utils
+```
+
+Comando `rndc` para mostrar el estado del servidor BIND
+
+```
+# rndc status
+```
+
+`Output`:
+```
+version: BIND 9.18.18-0ubuntu0.22.04.2-Ubuntu (Extended Support Version) <id:>
+running on localhost: Linux x86_64 5.15.0-101-generic #111-Ubuntu SMP Tue Mar 5 20:16:58 UTC 2024
+boot time: Sun, 31 Mar 2024 21:50:12 GMT
+last configured: Sun, 31 Mar 2024 21:50:12 GMT
+configuration file: /etc/bind/named.conf
+CPUs found: 2
+worker threads: 2
+UDP listeners per interface: 2
+number of zones: 102 (97 automatic)
+debug level: 0
+xfers running: 0
+xfers deferred: 0
+soa queries in progress: 0
+query logging is OFF
+recursive clients: 0/900/1000
+tcp clients: 0/150
+TCP high-water: 0
+server is up and running
 ```
 
 Configuración BIND
@@ -94,6 +122,7 @@ options {
 
  };
 ```
+
 Explicación de configuración de parámetros:
 
 1. ACL (Access Control List):
@@ -124,32 +153,12 @@ Explicación de configuración de parámetros:
   
     - `auth-nxdomain no;`: Configura BIND para no emitir respuestas de tipo "nxdomain"(nombre de dominio no existente) como respuestas autenticadas, conforme a la RFC 1035.
 
-Comando `rndc` para mostrar el estado del servidor BIND.
+Comando para verificar la configuración general del servicio de ´BIND´.
 
 ```
-# rndc status
+# named-checkconf
 ```
-`Output`:
-```
-version: BIND 9.18.18-0ubuntu0.22.04.2-Ubuntu (Extended Support Version) <id:>
-running on localhost: Linux x86_64 5.15.0-101-generic #111-Ubuntu SMP Tue Mar 5 20:16:58 UTC 2024
-boot time: Sun, 31 Mar 2024 21:50:12 GMT
-last configured: Sun, 31 Mar 2024 21:50:12 GMT
-configuration file: /etc/bind/named.conf
-CPUs found: 2
-worker threads: 2
-UDP listeners per interface: 2
-number of zones: 102 (97 automatic)
-debug level: 0
-xfers running: 0
-xfers deferred: 0
-soa queries in progress: 0
-query logging is OFF
-recursive clients: 0/900/1000
-tcp clients: 0/150
-TCP high-water: 0
-server is up and running
-```
+
 
 Creación de la zona `nameserver.intranet` en el servidor primario.
 
@@ -231,13 +240,20 @@ Explicación de configuración de parámetros:
   
    - `192.168.0.150` y `192.168.0.155`: Son las direcciones IP correspondientes a los servidores de nombres `ns1` y `ns2`, respectivamente.
 
+Comando para verificar la configuración de las zonas del servicio `BIND`.
+
+```
+# named-checkzone nameserver.intranet db.nameserver.intranet
+```
+
+
 ###### Server DNS Slave
 
 Entorno:
 - SO: Ubuntu
 - Network: 192.168.0.0/24
 - IP: 192.168.0.155
-- Hostname: ns2.hostingavanzado.intranet
+- Hostname: ns2.nameserver.intranet
 
 - Configuración de red
 
@@ -276,14 +292,199 @@ Nombramos hostname
 ```
 # hostnamectl set-hostname ns2.hostingavanzado.intranet
 ```
-Aplicamos cambios
+
+Reiniciamos sistema
+
 ```
 # reboot
 ```
 
 Instalación de BIND
+
 ```
 # apt update && apt install bind9 bind9utils
 ```
-   
-  
+
+Configuración BIND
+
+Nos situamos en el fichero de configuración de `bind` que se encuentra en `/etc/bind/named.conf.options` y lo dejamos de la siguiente forma:
+
+```
+acl allowed {
+        192.168.0.0/24;
+        localhost;
+};
+
+options {
+        directory "/var/cache/bind";
+        recursion yes;
+        allow-query { allowed; };
+        listen-on { 192.168.0.155; };
+        allow-transfer { none; };
+        // If there is a firewall between you and nameservers you want
+        // to talk to, you may need to fix the firewall to allow multiple
+        // ports to talk.  See http://www.kb.cert.org/vuls/id/800113
+
+        // If your ISP provided one or more IP addresses for stable
+        // nameservers, you probably want to use them as forwarders.
+        // Uncomment the following block, and insert the addresses replacing
+        // the all-0's placeholder.
+        forwarders {
+                8.8.8.8;
+                8.8.4.4;
+        };
+        forward only;
+        // };
+
+        //========================================================================
+        // If BIND logs error messages about the root key being expired,
+        // you will need to update your keys.  See https://www.isc.org/bind-keys
+        //========================================================================
+        dnssec-validation auto;
+
+        auth-nxdomain no;
+
+
+};
+```
+Creación de la zona `nameserver.intranet` en el servidor secundario.
+
+Editamos el fichero `named.conf.local` y lo dejamos de la siguiente forma:
+
+```
+zone "nameserver.intranet" {
+        type slave;
+        file "db.nameserver.intranet";
+        masters { 192.168.0.150; };
+};
+// Do any local configuration here
+//
+
+// Consider adding the 1918 zones here, if they are not used in your
+// organization
+//include "/etc/bind/zones.rfc1918";
+```
+Verificamos transferencia de fichero de registro
+
+```
+# ls /var/cache/bind
+```
+
+`output`:
+```
+db.nameserver.intranet  managed-keys.bind  managed-keys.bind.jnl
+```
+
+### Stack LAMP
+
+Entorno:
+- SO: Ubuntu
+- Network: 192.168.0.0/24
+- IP: 192.168.0.160
+- Hostname: apache-01ns1.stacklamp.intranet
+
+- Configuración de red.
+
+Configuramos IP estática.
+
+Abrimos archivo de configuración netplan
+
+```
+# nano /etc/netplan/00-installer-config.yaml
+```
+
+Luego lo editamos dejandolo de la siguiente manera:
+
+```
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    enp0s3:
+      dhcp4: false
+      addresses:
+        - 192.168.0.160/24
+      nameservers:
+       addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+          - to: default
+            via: 192.168.0.1
+```
+
+Aplicamos cambios.
+
+```
+# netplan apply
+```
+
+Nombramos hostname.
+
+```
+# hostnamectl set-hostname apache-01.stacklamp.intranet
+```
+
+Aplicamos cambios.
+
+```
+# reboot
+```
+
+Instalación de STACK LAMP
+
+```
+# apt install apache2 mysql-server php libapache2-mod-php php-mysql
+```
+
+Comprobamos el estado del servicio `apache2`
+
+```
+# systemctl status apache2
+```
+
+`Output:`
+```
+● apache2.service - The Apache HTTP Server
+     Loaded: loaded (/lib/systemd/system/apache2.service; enabled; vendor prese>
+     Active: active (running) since Mon 2024-04-08 00:27:34 UTC; 2min 0s ago
+       Docs: https://httpd.apache.org/docs/2.4/
+    Process: 10885 ExecStart=/usr/sbin/apachectl start (code=exited, status=0/S>
+   Main PID: 10890 (apache2)
+      Tasks: 6 (limit: 2220)
+     Memory: 10.6M
+        CPU: 36ms
+     CGroup: /system.slice/apache2.service
+             ├─10890 /usr/sbin/apache2 -k start
+             ├─10900 /usr/sbin/apache2 -k start
+             ├─10901 /usr/sbin/apache2 -k start
+             ├─10902 /usr/sbin/apache2 -k start
+             ├─10903 /usr/sbin/apache2 -k start
+             └─10904 /usr/sbin/apache2 -k start
+```
+
+Comprobamos estado del servicio `MySQL`
+
+```
+# systemctl status mysql
+```
+
+`Output:`
+```
+● mysql.service - MySQL Community Server
+     Loaded: loaded (/lib/systemd/system/mysql.service; enabled; vendor preset:>
+     Active: active (running) since Mon 2024-04-08 00:27:04 UTC; 6min ago
+   Main PID: 3445 (mysqld)
+     Status: "Server is operational"
+      Tasks: 37 (limit: 2220)
+     Memory: 365.5M
+        CPU: 2.713s
+     CGroup: /system.slice/mysql.service
+             └─3445 /usr/sbin/mysqld
+```
+
+Comprobamos la instalación de `PHP`
+
+```
+# php -v
+```
+
+
+
